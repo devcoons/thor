@@ -16,6 +16,13 @@
 
 package trie
 
+import (
+	"testing"
+
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/vechain/thor/thor"
+)
+
 // func TestCanUnload(t *testing.T) {
 // 	tests := []struct {
 // 		flag                 nodeFlag
@@ -54,3 +61,31 @@ package trie
 // 		}
 // 	}
 // }
+
+func BenchmarkEncodeFullNode(b *testing.B) {
+	var buf sliceBuffer
+	f := &fullNode{}
+	for i := 0; i < len(f.Children); i++ {
+		f.Children[i] = &hashNode{Hash: thor.BytesToBytes32(randBytes(32))}
+	}
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		rlp.Encode(&buf, f)
+	}
+}
+
+func BenchmarkFastEncodeFullNode(b *testing.B) {
+	f := &fullNode{}
+	for i := 0; i < len(f.Children); i++ {
+		f.Children[i] = &hashNode{Hash: thor.BytesToBytes32(randBytes(32))}
+	}
+
+	h := newHasher(0, 0)
+
+	for i := 0; i < b.N; i++ {
+		h.enc.Reset()
+		f.encode(&h.enc, false)
+		h.tmp.Reset()
+		h.enc.ToWriter(&h.tmp)
+	}
+}

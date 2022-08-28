@@ -19,7 +19,7 @@ import (
 )
 
 // gasLimitSoftLimit is the soft limit of the adaptive block gaslimit.
-const gasLimitSoftLimit uint64 = 21000000
+const gasLimitSoftLimit uint64 = 30_000_000
 
 func (n *Node) packerLoop(ctx context.Context) {
 	log.Debug("enter packer loop")
@@ -53,7 +53,7 @@ func (n *Node) packerLoop(ctx context.Context) {
 			n.packer.SetTargetGasLimit(suggested)
 		}
 
-		flow, err := n.packer.Schedule(n.repo.BestBlock().Header(), now)
+		flow, err := n.packer.Schedule(n.repo.BestBlockSummary(), now)
 		if err != nil {
 			if authorized {
 				authorized = false
@@ -86,7 +86,7 @@ func (n *Node) packerLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Second):
-				best := n.repo.BestBlock().Header()
+				best := n.repo.BestBlockSummary().Header
 				/*  re-schedule regarding the following two conditions:
 				1. parent block needs to update and the new best is not proposed by the same one
 				2. best block is better than the block to be proposed
@@ -115,34 +115,82 @@ func (n *Node) pack(flow *packer.Flow) error {
 		}
 	}()
 
-	startTime := mclock.Now()
-	for _, tx := range txs {
-		if err := flow.Adopt(tx); err != nil {
-			if packer.IsGasLimitReached(err) {
-				break
+	return n.guardBlockProcessing(flow.Number(), func(conflicts uint32) error {
+		var (
+			startTime  = mclock.Now()
+			logEnabled = !n.skipLogs && !n.logDBFailed
+			oldBest    = n.repo.BestBlockSummary()
+		)
+
+		// adopt txs
+		for _, tx := range txs {
+			if err := flow.Adopt(tx); err != nil {
+				if packer.IsGasLimitReached(err) {
+					break
+				}
+				if packer.IsTxNotAdoptableNow(err) {
+					continue
+				}
+				txsToRemove = append(txsToRemove, tx)
 			}
-			if packer.IsTxNotAdoptableNow(err) {
-				continue
-			}
-			txsToRemove = append(txsToRemove, tx)
 		}
-	}
 
-	newBlock, stage, receipts, err := flow.Pack(n.master.PrivateKey)
-	if err != nil {
-		return err
-	}
-	execElapsed := mclock.Now() - startTime
+		var shouldVote bool
+		if flow.Number() >= n.forkConfig.FINALITY {
+			var err error
+			shouldVote, err = n.bft.ShouldVote(flow.ParentHeader().ID())
+			if err != nil {
+				return errors.Wrap(err, "get vote")
+			}
+		}
 
-	prevTrunk, curTrunk, err := n.commitBlock(stage, newBlock, receipts)
-	if err != nil {
-		return errors.WithMessage(err, "commit block")
-	}
-	commitElapsed := mclock.Now() - startTime - execElapsed
+		// pack the new block
+		newBlock, stage, receipts, err := flow.Pack(n.master.PrivateKey, conflicts, shouldVote)
+		if err != nil {
+			return errors.Wrap(err, "failed to pack block")
+		}
+		execElapsed := mclock.Now() - startTime
 
-	n.processFork(prevTrunk, curTrunk)
+		// write logs
+		if logEnabled {
+			if n.writeLogs(newBlock, receipts, oldBest.Header.ID()); err != nil {
+				return errors.Wrap(err, "write logs")
+			}
+		}
 
-	if prevTrunk.HeadID() != curTrunk.HeadID() {
+		// commit the state
+		if _, err := stage.Commit(); err != nil {
+			return errors.Wrap(err, "commit state")
+		}
+
+		// add the new block into repository
+		if err := n.repo.AddBlock(newBlock, receipts, conflicts); err != nil {
+			return errors.Wrap(err, "add block")
+		}
+
+		// commit block in bft engine
+		if newBlock.Header().Number() >= n.forkConfig.FINALITY {
+			if err := n.bft.CommitBlock(newBlock.Header(), true); err != nil {
+				return errors.Wrap(err, "bft commits")
+			}
+		}
+		realElapsed := mclock.Now() - startTime
+
+		// sync the log-writing task
+		if logEnabled {
+			if err := n.logWorker.Sync(); err != nil {
+				log.Warn("failed to write logs", "err", err)
+				n.logDBFailed = true
+			}
+		}
+
+		if err := n.repo.SetBestBlockID(newBlock.Header().ID()); err != nil {
+			return err
+		}
+
+		n.processFork(newBlock, oldBest.Header.ID())
+		commitElapsed := mclock.Now() - startTime - execElapsed
+
 		n.comm.BroadcastBlock(newBlock)
 		log.Info("📦 new block packed",
 			"txs", len(receipts),
@@ -150,10 +198,10 @@ func (n *Node) pack(flow *packer.Flow) error {
 			"et", fmt.Sprintf("%v|%v", common.PrettyDuration(execElapsed), common.PrettyDuration(commitElapsed)),
 			"id", shortID(newBlock.Header().ID()),
 		)
-	}
 
-	if v, updated := n.bandwidth.Update(newBlock.Header(), time.Duration(execElapsed+commitElapsed)); updated {
-		log.Debug("bandwidth updated", "gps", v)
-	}
-	return nil
+		if v, updated := n.bandwidth.Update(newBlock.Header(), time.Duration(realElapsed)); updated {
+			log.Debug("bandwidth updated", "gps", v)
+		}
+		return nil
+	})
 }

@@ -14,7 +14,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
-	"github.com/vechain/go-ecvrf"
 	"github.com/vechain/thor/block"
 	"github.com/vechain/thor/builtin"
 	"github.com/vechain/thor/chain"
@@ -24,6 +23,7 @@ import (
 	"github.com/vechain/thor/state"
 	"github.com/vechain/thor/thor"
 	"github.com/vechain/thor/tx"
+	"github.com/vechain/thor/vrf"
 )
 
 func txBuilder(tag byte) *tx.Builder {
@@ -89,19 +89,20 @@ func newTestConsensus() (*testConsensus, error) {
 
 	proposer := genesis.DevAccounts()[0]
 	p := packer.New(repo, stater, proposer.Address, &proposer.Address, forkConfig)
-	flow, err := p.Schedule(parent.Header(), uint64(parent.Header().Timestamp()+100*thor.BlockInterval))
+	parentSum, _ := repo.GetBlockSummary(parent.Header().ID())
+	flow, err := p.Schedule(parentSum, uint64(parent.Header().Timestamp()+100*thor.BlockInterval))
 	if err != nil {
 		return nil, err
 	}
 
-	b1, stage, receipts, err := flow.Pack(proposer.PrivateKey)
+	b1, stage, receipts, err := flow.Pack(proposer.PrivateKey, 0, false)
 	if err != nil {
 		return nil, err
 	}
 
 	con := New(repo, stater, forkConfig)
 
-	if _, _, err := con.Process(b1, flow.When()); err != nil {
+	if _, _, err := con.Process(parentSum, b1, flow.When(), 0); err != nil {
 		return nil, err
 	}
 
@@ -109,7 +110,7 @@ func newTestConsensus() (*testConsensus, error) {
 		return nil, err
 	}
 
-	if err := repo.AddBlock(b1, receipts); err != nil {
+	if err := repo.AddBlock(b1, receipts, 0); err != nil {
 		return nil, err
 	}
 
@@ -119,17 +120,18 @@ func newTestConsensus() (*testConsensus, error) {
 
 	proposer2 := genesis.DevAccounts()[1]
 	p2 := packer.New(repo, stater, proposer2.Address, &proposer2.Address, forkConfig)
-	flow2, err := p2.Schedule(b1.Header(), uint64(b1.Header().Timestamp()+100*thor.BlockInterval))
+	b1sum, _ := repo.GetBlockSummary(b1.Header().ID())
+	flow2, err := p2.Schedule(b1sum, uint64(b1.Header().Timestamp()+100*thor.BlockInterval))
 	if err != nil {
 		return nil, err
 	}
 
-	b2, _, _, err := flow2.Pack(proposer2.PrivateKey)
+	b2, _, _, err := flow2.Pack(proposer2.PrivateKey, 0, false)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, _, err := con.Process(b2, flow2.When()); err != nil {
+	if _, _, err := con.Process(b1sum, b2, flow2.When(), 0); err != nil {
 		return nil, err
 	}
 
@@ -162,7 +164,7 @@ func (tc *testConsensus) signWithKey(builder *block.Builder, pk *ecdsa.PrivateKe
 			}
 			alpha = beta
 		}
-		_, proof, err := ecvrf.NewSecp256k1Sha256Tai().Prove(pk, alpha)
+		_, proof, err := vrf.Prove(pk, alpha)
 		if err != nil {
 			return nil, err
 		}
@@ -204,7 +206,12 @@ func (tc *testConsensus) builder(header *block.Header) *block.Builder {
 }
 
 func (tc *testConsensus) consent(blk *block.Block) error {
-	_, _, err := tc.con.Process(blk, tc.time)
+	parentSum, err := tc.con.repo.GetBlockSummary(blk.Header().ParentID())
+	if err != nil {
+		return err
+	}
+
+	_, _, err = tc.con.Process(parentSum, blk, tc.time, 0)
 	return err
 }
 
@@ -399,23 +406,6 @@ func TestVerifyBlock(t *testing.T) {
 		name     string
 		testFunc func(*testing.T)
 	}{
-		{
-			"KnownBlock", func(t *testing.T) {
-				err = tc.consent(tc.parent)
-				assert.Equal(t, err, errKnownBlock)
-			},
-		},
-		{
-			"ParentMissing", func(t *testing.T) {
-				builder := tc.builder(tc.original.Header())
-				blk, err := tc.sign(builder.ParentID(tc.original.Header().ID()))
-				if err != nil {
-					t.Fatal(err)
-				}
-				err = tc.consent(blk)
-				assert.Equal(t, err, errParentMissing)
-			},
-		},
 		{
 			"TxDepBroken", func(t *testing.T) {
 				txID := txSign(txBuilder(tc.tag)).ID()

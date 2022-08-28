@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/vechain/thor/block"
 	"github.com/vechain/thor/chain"
+	"github.com/vechain/thor/cmd/thor/solo"
 	"github.com/vechain/thor/genesis"
 	"github.com/vechain/thor/muxdb"
 	"github.com/vechain/thor/packer"
@@ -100,7 +101,8 @@ func initBlockServer(t *testing.T) {
 	}
 	tx = tx.WithSignature(sig)
 	packer := packer.New(repo, stater, genesis.DevAccounts()[0].Address, &genesis.DevAccounts()[0].Address, thor.NoFork)
-	flow, err := packer.Schedule(b.Header(), uint64(time.Now().Unix()))
+	sum, _ := repo.GetBlockSummary(b.Header().ID())
+	flow, err := packer.Schedule(sum, uint64(time.Now().Unix()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,21 +110,21 @@ func initBlockServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, stage, receipts, err := flow.Pack(genesis.DevAccounts()[0].PrivateKey)
+	block, stage, receipts, err := flow.Pack(genesis.DevAccounts()[0].PrivateKey, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := stage.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.AddBlock(block, receipts); err != nil {
+	if err := repo.AddBlock(block, receipts, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.SetBestBlockID(block.Header().ID()); err != nil {
 		t.Fatal(err)
 	}
 	router := mux.NewRouter()
-	New(repo).Mount(router, "/blocks")
+	New(repo, &solo.BFTEngine{}).Mount(router, "/blocks")
 	ts = httptest.NewServer(router)
 	blk = block
 }

@@ -20,8 +20,9 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/pkg/errors"
 	"github.com/vechain/thor/api"
+	"github.com/vechain/thor/bft"
 	"github.com/vechain/thor/cmd/thor/node"
-	"github.com/vechain/thor/cmd/thor/pruner"
+	"github.com/vechain/thor/cmd/thor/optimizer"
 	"github.com/vechain/thor/cmd/thor/solo"
 	"github.com/vechain/thor/genesis"
 	"github.com/vechain/thor/logdb"
@@ -30,6 +31,9 @@ import (
 	"github.com/vechain/thor/thor"
 	"github.com/vechain/thor/txpool"
 	cli "gopkg.in/urfave/cli.v1"
+
+	// Force-load the tracer engines to trigger registration
+	_ "github.com/vechain/thor/tracers/native"
 )
 
 var (
@@ -181,11 +185,18 @@ func defaultAction(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+
+	bftEngine, err := bft.NewEngine(repo, mainDB, forkConfig, master.Address())
+	if err != nil {
+		return errors.Wrap(err, "init bft engine")
+	}
+
 	apiHandler, apiCloser := api.New(
 		repo,
 		state.NewStater(mainDB),
 		txPool,
 		logDB,
+		bftEngine,
 		p2pcom.comm,
 		ctx.String(apiCorsFlag.Name),
 		uint32(ctx.Int(apiBacktraceLimitFlag.Name)),
@@ -208,14 +219,13 @@ func defaultAction(ctx *cli.Context) error {
 	}
 	defer p2pcom.Stop()
 
-	if !ctx.Bool(disablePrunerFlag.Name) {
-		pruner := pruner.New(mainDB, repo)
-		defer func() { log.Info("stopping pruner..."); pruner.Stop() }()
-	}
+	optimizer := optimizer.New(mainDB, repo, !ctx.Bool(disablePrunerFlag.Name))
+	defer func() { log.Info("stopping optimizer..."); optimizer.Stop() }()
 
 	return node.New(
 		master,
 		repo,
+		bftEngine,
 		state.NewStater(mainDB),
 		logDB,
 		txPool,
@@ -278,12 +288,14 @@ func soloAction(ctx *cli.Context) error {
 	txPool := txpool.New(repo, state.NewStater(mainDB), txPoolOption)
 	defer func() { log.Info("closing tx pool..."); txPool.Close() }()
 
+	bftEngine := solo.NewBFTEngine(repo)
 	apiHandler, apiCloser := api.New(
 		repo,
 		state.NewStater(mainDB),
 		txPool,
 		logDB,
-		solo.Communicator{},
+		bftEngine,
+		&solo.Communicator{},
 		ctx.String(apiCorsFlag.Name),
 		uint32(ctx.Int(apiBacktraceLimitFlag.Name)),
 		uint64(ctx.Int(apiCallGasLimitFlag.Name)),
@@ -300,10 +312,8 @@ func soloAction(ctx *cli.Context) error {
 
 	printSoloStartupMessage(gene, repo, instanceDir, apiURL, forkConfig)
 
-	if !ctx.Bool(disablePrunerFlag.Name) {
-		pruner := pruner.New(mainDB, repo)
-		defer func() { log.Info("stopping pruner..."); pruner.Stop() }()
-	}
+	optimizer := optimizer.New(mainDB, repo, !ctx.Bool(disablePrunerFlag.Name))
+	defer func() { log.Info("stopping optimizer..."); optimizer.Stop() }()
 
 	return solo.New(repo,
 		state.NewStater(mainDB),

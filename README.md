@@ -4,7 +4,7 @@ A general purpose blockchain highly compatible with Ethereum's ecosystem.
 
 This is the first implementation written in golang.
 
-[![Go](https://img.shields.io/badge/golang-%3E%3D1.13-orange.svg)](https://golang.org)
+[![Go](https://img.shields.io/badge/golang-%3E%3D1.16-orange.svg)](https://golang.org)
 [![Go Report Card](https://goreportcard.com/badge/github.com/vechain/thor)](https://goreportcard.com/report/github.com/vechain/thor)
 [![Travis](https://travis-ci.org/vechain/thor.svg?branch=master)](https://travis-ci.org/vechain/thor)
 [![License](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://github.com/vechain/thor/blob/master/LICENSE)
@@ -30,7 +30,7 @@ This is the first implementation written in golang.
 
 ### Requirements
 
-Thor requires `Go` 1.13+ and `C` compiler to build. To install `Go`, follow this [link](https://golang.org/doc/install).
+Thor requires `Go` 1.16+ and `C` compiler to build. To install `Go`, follow this [link](https://golang.org/doc/install).
 
 ### Getting the source
 
@@ -40,16 +40,6 @@ Clone the Thor repo:
 git clone https://github.com/vechain/thor.git
 cd thor
 ```
-
-### Dependency management
-
-Simply run:
-
-```shell
-make dep
-```
-
-If you keep getting network errors, it is suggested to use [Go Module Proxy](https://golang.org/cmd/go/#hdr-Module_proxy_protocol). [https://proxy.golang.org/](https://proxy.golang.org/) is one option.
 
 ### Building
 
@@ -158,13 +148,10 @@ docker run -d\
 
 Do not forget to add the `--api-addr 0.0.0.0:8669` flag if you want other containers and/or hosts to have access to the RESTful API. `Thor` binds to `localhost` by default and it will not accept requests outside the container itself without the flag.
 
-The [Dockerfile](https://raw.githubusercontent.com/vechain/thor/master/Dockerfile) is designed to build the last release of the source code and will publish docker images to [dockerhub](https://hub.docker.com/r/vechain/thor/) by release, feel free to fork and build Dockerfile for your own purpose.
-
 ## Explorers
 
 * [VeChain Explorer (Official)](https://explore.vechain.org)
 * [VeChainStats](https://vechainstats.com/)
-* [Vexplorer](https://vexplorer.io/)
 * [Insight](https://insight.vecha.in/)
 
 ## Testnet faucet

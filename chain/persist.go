@@ -23,9 +23,10 @@ const (
 // BlockSummary presents block summary.
 type BlockSummary struct {
 	Header    *block.Header
-	IndexRoot thor.Bytes32
 	Txs       []thor.Bytes32
 	Size      uint64
+	Conflicts uint32
+	SteadyNum uint32
 }
 
 // the key for tx/receipt.
@@ -60,6 +61,14 @@ func loadRLP(r kv.Getter, key []byte, val interface{}) error {
 
 func saveBlockSummary(w kv.Putter, summary *BlockSummary) error {
 	return saveRLP(w, summary.Header.ID().Bytes(), summary)
+}
+
+func indexChainHead(w kv.Putter, header *block.Header) error {
+	if err := w.Delete(header.ParentID().Bytes()); err != nil {
+		return err
+	}
+
+	return w.Put(header.ID().Bytes(), nil)
 }
 
 func loadBlockSummary(r kv.Getter, id thor.Bytes32) (*BlockSummary, error) {

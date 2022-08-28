@@ -29,7 +29,7 @@ type Config struct {
 	// Debug enabled debugging Interpreter options
 	Debug bool
 	// Tracer is the op code logger
-	Tracer Tracer
+	Tracer Logger
 	// NoRecursion disabled Interpreter call, callcode,
 	// delegate call and create.
 	NoRecursion bool
@@ -49,7 +49,6 @@ type Interpreter struct {
 	evm      *EVM
 	cfg      Config
 	gasTable params.GasTable
-	intPool  *intPool
 
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
@@ -79,7 +78,6 @@ func NewInterpreter(evm *EVM, cfg Config) *Interpreter {
 		evm:      evm,
 		cfg:      cfg,
 		gasTable: evm.ChainConfig().GasTable(evm.BlockNumber),
-		intPool:  newIntPool(),
 	}
 }
 
@@ -104,7 +102,7 @@ func (in *Interpreter) enforceRestrictions(op OpCode, operation *operation, stac
 //
 // It's important to note that any errors returned by the interpreter should be
 // considered a revert-and-consume-all-gas operation except for
-// errExecutionReverted which means revert-and-keep-gas-left.
+// ErrExecutionReverted which means revert-and-keep-gas-left.
 func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err error) {
 	// Increment the call depth which is restricted to 1024
 	in.evm.depth++
@@ -131,9 +129,9 @@ func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err er
 	}
 
 	var (
-		op    OpCode                     // current opcode
-		mem   = NewMemory()              // bound memory
-		stack = stackPool.Get().(*Stack) // local stack
+		op    OpCode        // current opcode
+		mem   = NewMemory() // bound memory
+		stack = newstack()  // local stack
 		// For optimisation reason we're using uint64 as the program counter.
 		// It's theoretically possible to go above 2^64. The YP defines the PC
 		// to be uint256. Practically much less so feasible.
@@ -144,17 +142,17 @@ func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err er
 		gasCopy uint64 // for Tracer to log gas remaining before execution
 		logged  bool   // deferred Tracer should ignore already logged steps
 	)
-	defer stackPool.Put(stack)
-	stack.reset()
+	defer returnStack(stack)
+
 	contract.Input = input
 
 	if in.cfg.Debug {
 		defer func() {
 			if err != nil {
 				if !logged {
-					in.cfg.Tracer.CaptureState(in.evm, pcCopy, op, gasCopy, cost, mem, stack, contract, in.evm.depth, err)
+					in.cfg.Tracer.CaptureState(pcCopy, op, gasCopy, cost, mem, stack, contract, in.returnData, in.evm.depth, err)
 				} else {
-					in.cfg.Tracer.CaptureFault(in.evm, pcCopy, op, gasCopy, cost, mem, stack, contract, in.evm.depth, err)
+					in.cfg.Tracer.CaptureFault(pcCopy, op, gasCopy, cost, mem, stack, contract, in.evm.depth, err)
 				}
 			}
 		}()
@@ -188,7 +186,7 @@ func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err er
 		// calculate the new memory size and expand the memory to fit
 		// the operation
 		if operation.memorySize != nil {
-			memSize, overflow := bigUint64(operation.memorySize(stack))
+			memSize, overflow := operation.memorySize(stack)
 			if overflow {
 				return nil, errGasUintOverflow
 			}
@@ -204,22 +202,20 @@ func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err er
 		if err != nil || !contract.UseGas(cost) {
 			return nil, ErrOutOfGas
 		}
+
+		// Do tracing before memory expansion
+		if in.cfg.Debug {
+			in.cfg.Tracer.CaptureState(pc, op, gasCopy, cost, mem, stack, contract, in.returnData, in.evm.depth, err)
+			logged = true
+		}
+
 		if memorySize > 0 {
 			mem.Resize(memorySize)
 		}
 
-		if in.cfg.Debug {
-			in.cfg.Tracer.CaptureState(in.evm, pc, op, gasCopy, cost, mem, stack, contract, in.evm.depth, err)
-			logged = true
-		}
-
 		// execute the operation
 		res, err := operation.execute(&pc, in.evm, contract, mem, stack)
-		// verifyPool is a build flag. Pool verification makes sure the integrity
-		// of the integer pool by comparing values to a default value.
-		if verifyPool {
-			verifyIntegerPool(in.intPool)
-		}
+
 		// if the operation clears the return data (e.g. it has returning data)
 		// set the last return to the result of the operation.
 		if operation.returns {
@@ -230,7 +226,7 @@ func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err er
 		case err != nil:
 			return nil, err
 		case operation.reverts:
-			return res, errExecutionReverted
+			return res, ErrExecutionReverted
 		case operation.halts:
 			return res, nil
 		case !operation.jumps:

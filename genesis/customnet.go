@@ -158,6 +158,14 @@ func NewCustomNet(gen *CustomGenesis) (*Genesis, error) {
 	data = mustEncodeInput(builtin.Params.ABI, "set", thor.KeyProposerEndorsement, e)
 	builder.Call(tx.NewClause(&builtin.Params.Address).WithData(data), executor)
 
+	if m := gen.Params.MaxBlockProposers; m != nil {
+		if *m == uint64(0) {
+			return nil, errors.New("maxBlockProposers must a non-negative integer")
+		}
+		data = mustEncodeInput(builtin.Params.ABI, "set", thor.KeyMaxBlockProposers, new(big.Int).SetUint64(*m))
+		builder.Call(tx.NewClause(&builtin.Params.Address).WithData(data), executor)
+	}
+
 	if len(gen.Authority) == 0 {
 		return nil, errors.New("at least one authority node")
 	}
@@ -191,8 +199,8 @@ func NewCustomNet(gen *CustomGenesis) (*Genesis, error) {
 // Account is the account will set to the genesis block
 type Account struct {
 	Address thor.Address            `json:"address"`
-	Balance *hexOrDecimal256        `json:"balance"`
-	Energy  *hexOrDecimal256        `json:"energy"`
+	Balance *HexOrDecimal256        `json:"balance"`
+	Energy  *HexOrDecimal256        `json:"energy"`
 	Code    string                  `json:"code"`
 	Storage map[string]thor.Bytes32 `json:"storage"`
 }
@@ -217,18 +225,19 @@ type Approver struct {
 
 // Params means the chain params for params contract
 type Params struct {
-	RewardRatio         *hexOrDecimal256 `json:"rewardRatio"`
-	BaseGasPrice        *hexOrDecimal256 `json:"baseGasPrice"`
-	ProposerEndorsement *hexOrDecimal256 `json:"proposerEndorsement"`
+	RewardRatio         *HexOrDecimal256 `json:"rewardRatio"`
+	BaseGasPrice        *HexOrDecimal256 `json:"baseGasPrice"`
+	ProposerEndorsement *HexOrDecimal256 `json:"proposerEndorsement"`
 	ExecutorAddress     *thor.Address    `json:"executorAddress"`
+	MaxBlockProposers   *uint64          `json:"maxBlockProposers"`
 }
 
 // hexOrDecimal256 marshals big.Int as hex or decimal.
 // Copied from go-ethereum/common/math and implement json. Marshaler
-type hexOrDecimal256 big.Int
+type HexOrDecimal256 math.HexOrDecimal256
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
-func (i *hexOrDecimal256) UnmarshalJSON(input []byte) error {
+func (i *HexOrDecimal256) UnmarshalJSON(input []byte) error {
 	var hex string
 	if err := json.Unmarshal(input, &hex); err != nil {
 		if err = (*big.Int)(i).UnmarshalJSON(input); err != nil {
@@ -240,11 +249,11 @@ func (i *hexOrDecimal256) UnmarshalJSON(input []byte) error {
 	if !ok {
 		return fmt.Errorf("invalid hex or decimal integer %q", input)
 	}
-	*i = hexOrDecimal256(*bigint)
+	*i = HexOrDecimal256(*bigint)
 	return nil
 }
 
 // MarshalJSON implements the json.Marshaler interface.
-func (i *hexOrDecimal256) MarshalJSON() ([]byte, error) {
+func (i *HexOrDecimal256) MarshalJSON() ([]byte, error) {
 	return (*math.HexOrDecimal256)(i).MarshalText()
 }

@@ -12,13 +12,13 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/vechain/go-ecvrf"
 	"github.com/vechain/thor/block"
 	"github.com/vechain/thor/chain"
 	"github.com/vechain/thor/genesis"
 	"github.com/vechain/thor/muxdb"
 	"github.com/vechain/thor/state"
 	"github.com/vechain/thor/thor"
+	"github.com/vechain/thor/vrf"
 )
 
 func TestSeeder_Generate(t *testing.T) {
@@ -45,7 +45,7 @@ func TestSeeder_Generate(t *testing.T) {
 			ParentID(parent.Header().ID()).
 			Build().WithSignature(sig[:])
 
-		if err := repo.AddBlock(b, nil); err != nil {
+		if err := repo.AddBlock(b, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 		parent = b
@@ -94,13 +94,13 @@ func TestSeeder_Generate(t *testing.T) {
 	}
 
 	// 31 - 35
-	parent = repo.BestBlock()
+	parent, _ = repo.GetBlock(repo.BestBlockSummary().Header.ID())
 	for i := 1; i <= int(epochInterval/2); i++ {
 		b := new(block.Builder).
 			ParentID(parent.Header().ID()).
 			Build().WithSignature(sig[:])
 
-		if err := repo.AddBlock(b, nil); err != nil {
+		if err := repo.AddBlock(b, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 		parent = b
@@ -131,7 +131,7 @@ func TestSeeder_Generate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, proof, err := ecvrf.NewSecp256k1Sha256Tai().Prove(priv, parentBeta)
+		_, proof, err := vrf.Prove(priv, parentBeta)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func TestSeeder_Generate(t *testing.T) {
 
 		b = b.WithSignature(cs)
 
-		if err := repo.AddBlock(b, nil); err != nil {
+		if err := repo.AddBlock(b, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 		parent = b

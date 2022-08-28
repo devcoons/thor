@@ -16,9 +16,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/vechain/go-ecvrf"
 	"github.com/vechain/thor/thor"
 	"github.com/vechain/thor/tx"
+	"github.com/vechain/thor/vrf"
 )
 
 // Header contains almost all information about a block, except block body.
@@ -99,7 +99,7 @@ func (h *Header) TxsFeatures() tx.Features {
 	return h.body.TxsRootFeatures.Features
 }
 
-// StateRoot returns account state merkle root just afert this block being applied.
+// StateRoot returns account state merkle root just after this block being applied.
 func (h *Header) StateRoot() thor.Bytes32 {
 	return h.body.StateRoot
 }
@@ -126,12 +126,7 @@ func (h *Header) ID() (id thor.Bytes32) {
 		return
 	}
 
-	hw := thor.NewBlake2b()
-	hw.Write(h.SigningHash().Bytes())
-	hw.Write(signer.Bytes())
-	hw.Sum(id[:0])
-
-	return
+	return thor.Blake2b(h.SigningHash().Bytes(), signer[:])
 }
 
 // SigningHash computes hash of all header fields excluding signature.
@@ -141,22 +136,21 @@ func (h *Header) SigningHash() (hash thor.Bytes32) {
 	}
 	defer func() { h.cache.signingHash.Store(hash) }()
 
-	hw := thor.NewBlake2b()
-	rlp.Encode(hw, []interface{}{
-		h.body.ParentID,
-		h.body.Timestamp,
-		h.body.GasLimit,
-		h.body.Beneficiary,
+	return thor.Blake2bFn(func(w io.Writer) {
+		rlp.Encode(w, []interface{}{
+			&h.body.ParentID,
+			h.body.Timestamp,
+			h.body.GasLimit,
+			&h.body.Beneficiary,
 
-		h.body.GasUsed,
-		h.body.TotalScore,
+			h.body.GasUsed,
+			h.body.TotalScore,
 
-		&h.body.TxsRootFeatures,
-		h.body.StateRoot,
-		h.body.ReceiptsRoot,
+			&h.body.TxsRootFeatures,
+			&h.body.StateRoot,
+			&h.body.ReceiptsRoot,
+		})
 	})
-	hw.Sum(hash[:0])
-	return
 }
 
 // Signature returns signature.
@@ -210,6 +204,11 @@ func (h *Header) Alpha() []byte {
 	return h.body.Extension.Alpha
 }
 
+// COM returns whether the packer votes COM.
+func (h *Header) COM() bool {
+	return h.body.Extension.COM
+}
+
 // Beta verifies the VRF proof in header's signature and returns the beta.
 func (h *Header) Beta() (beta []byte, err error) {
 	if h.Number() == 0 || len(h.body.Signature) == 65 {
@@ -233,7 +232,7 @@ func (h *Header) Beta() (beta []byte, err error) {
 		return
 	}
 
-	return ecvrf.NewSecp256k1Sha256Tai().Verify(pub, h.body.Extension.Alpha, ComplexSignature(h.body.Signature).Proof())
+	return vrf.Verify(pub, h.body.Extension.Alpha, ComplexSignature(h.body.Signature).Proof())
 }
 
 // EncodeRLP implements rlp.Encoder
@@ -275,9 +274,10 @@ func (h *Header) String() string {
 	StateRoot:      %v
 	ReceiptsRoot:   %v
 	Alpha:          0x%x
+	COM:            %v
 	Signature:      0x%x`, h.ID(), h.Number(), h.body.ParentID, h.body.Timestamp, signerStr,
 		h.body.Beneficiary, h.body.GasLimit, h.body.GasUsed, h.body.TotalScore,
-		h.body.TxsRootFeatures.Root, h.body.TxsRootFeatures.Features, h.body.StateRoot, h.body.ReceiptsRoot, h.body.Extension.Alpha, h.body.Signature)
+		h.body.TxsRootFeatures.Root, h.body.TxsRootFeatures.Features, h.body.StateRoot, h.body.ReceiptsRoot, h.body.Extension.Alpha, h.body.Extension.COM, h.body.Signature)
 }
 
 // BetterThan return if this block is better than other one.

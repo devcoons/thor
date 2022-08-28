@@ -76,6 +76,30 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{9}): &blake2F{},
 }
 
+var (
+	PrecompiledAddressesIstanbul  []common.Address
+	PrecompiledAddressesByzantium []common.Address
+)
+
+func init() {
+	for k := range PrecompiledContractsByzantium {
+		PrecompiledAddressesByzantium = append(PrecompiledAddressesByzantium, k)
+	}
+	for k := range PrecompiledContractsIstanbul {
+		PrecompiledAddressesIstanbul = append(PrecompiledAddressesIstanbul, k)
+	}
+}
+
+// ActivePrecompiles returns the precompiles enabled with the current configuration.
+func ActivePrecompiles(rules Rules) []common.Address {
+	switch {
+	case rules.IsByzantium:
+		return PrecompiledAddressesByzantium
+	default:
+		return PrecompiledAddressesIstanbul
+	}
+}
+
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
 func RunPrecompiledContract(p PrecompiledContract, input []byte, contract *Contract) (ret []byte, err error) {
 	gas := p.RequiredGas(input)
@@ -205,6 +229,7 @@ func (c *dataCopy) Run(in []byte) ([]byte, error) {
 type bigModExp struct{}
 
 var (
+	big0      = big.NewInt(0)
 	big1      = big.NewInt(1)
 	big4      = big.NewInt(4)
 	big8      = big.NewInt(8)
